@@ -1,16 +1,16 @@
 name: CD (CT inside, HF-first)
 
 on:
+  # ➜ Arranca CD cuando CI termina (en main)
   workflow_run:
-    workflows: ["CI (Multi-Job)"]   # Debe coincidir EXACTO con el name: del CI
+    workflows: ["CI (Multi-Job)"]   # debe coincidir con el name: de tu ci.yml
     types: [completed]
     branches: [main]
+
+  # (opcional) manual y por drift
   workflow_dispatch: {}
-  push:
-    branches: [main]
   repository_dispatch:
     types: [drift-detected, data-updated]
-
 env:
   ACCURACY_THRESHOLD: "0.90"
   HF_MODEL_ID:   ${{ secrets.HF_MODEL_ID }}
@@ -19,7 +19,14 @@ env:
 
 jobs:
   train:
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Solo corre si:
+    # - el evento es workflow_run y CI terminó en success
+    # - o viene de repository_dispatch (drift) o workflow_dispatch (manual)
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success') ||
+      github.event_name == 'repository_dispatch' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     outputs:
       approved: ${{ steps.gate.outputs.approved }}
