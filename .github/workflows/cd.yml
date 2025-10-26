@@ -83,26 +83,28 @@ jobs:
             python -c "from huggingface_hub import HfApi, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); rid=os.environ['HF_DATASET_ID']; upload_folder(repo_id=rid, repo_type='dataset', folder_path='.', path_in_repo='.', allow_patterns=['metrics.json'], commit_message='Update metrics')"
           fi
 
-  publish_model:
-    name: Publish model (HF Model repo)
-    runs-on: ubuntu-latest
-    needs: [train]
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: model-and-metrics
-          path: models
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Push model to HF Hub
-        env:
-          HF_TOKEN:   ${{ secrets.HF_TOKEN }}
-          HF_MODEL_ID: ${{ env.HF_MODEL_ID }}
-        run: |
-          python -m pip install -U huggingface_hub
-          python -c "from huggingface_hub import HfApi, create_repo, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); mid=os.environ['HF_MODEL_ID']; create_repo(mid, repo_type='model', exist_ok=True); upload_folder(repo_id=mid, repo_type='model', folder_path='models', path_in_repo='.', commit_message='Upload trained model')"
-          python -c "from huggingface_hub import HfApi; import os, time; api=HfApi(token=os.environ['HF_TOKEN']); mid=os.environ['HF_MODEL_ID']; api.set_tag(repo_id=mid, repo_type='model', tag='latest'); api.set_tag(repo_id=mid, repo_type='model', tag=time.strftime('run-%Y%m%d-%H%M%S'))"
+publish_model:
+  name: Publish model (HF Model repo)
+  runs-on: ubuntu-latest
+  needs: [train]
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: model-and-metrics
+        path: models
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Push model to HF Hub
+      shell: bash
+      env:
+        HF_TOKEN:    ${{ secrets.HF_TOKEN }}
+        HF_MODEL_ID: ${{ env.HF_MODEL_ID }}
+      run: |
+        python -m pip install -U huggingface_hub
+        mkdir -p models
+        date +run-%Y%m%d-%H%M%S > models/MODEL_VERSION.txt
+        python -c "from huggingface_hub import HfApi, create_repo, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); mid=os.environ['HF_MODEL_ID']; create_repo(mid, repo_type='model', exist_ok=True); upload_folder(repo_id=mid, repo_type='model', folder_path='models', path_in_repo='.', commit_message='Upload trained model')"
 
   deploy:
     name: Deploy Space
