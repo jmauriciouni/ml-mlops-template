@@ -17,3 +17,6 @@ evidently
 
 # Hugging Face
 huggingface_hub
+
+#MLFlow
+mlflow==2.16.2
