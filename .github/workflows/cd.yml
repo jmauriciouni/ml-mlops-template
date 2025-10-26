@@ -1,13 +1,13 @@
 name: CD (CT inside, HF-first)
 
 on:
-  # Lanza CD cuando CI termina (sobre main)
+  # Arranca CD cuando el workflow de CI termina en main
   workflow_run:
     workflows: ["CI (Multi-Job)"]
     types: [completed]
     branches: [main]
 
-  # (Opcionales) manual y por drift
+  # (Opcionales) ejecución manual y por drift
   workflow_dispatch: {}
   repository_dispatch:
     types: [drift-detected, data-updated]
@@ -34,17 +34,18 @@ jobs:
       approved: ${{ steps.gate.outputs.approved }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install & Train
+      - name: Install & Train (CT)
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt
           python train.py | tee train_log.txt
 
-      - name: Upload artifacts
+      - name: Upload artifacts (model + metrics)
         uses: actions/upload-artifact@v4
         with:
           name: model-and-metrics
@@ -71,13 +72,16 @@ jobs:
     needs: train
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: model-and-metrics
           path: .
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Push dataset to HF Hub
         env:
           HF_TOKEN:      ${{ secrets.HF_TOKEN }}
@@ -100,9 +104,11 @@ jobs:
         with:
           name: model-and-metrics
           path: models
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Push model to HF Hub
         env:
           HF_TOKEN:    ${{ secrets.HF_TOKEN }}
@@ -120,13 +126,22 @@ jobs:
     if: needs.train.outputs.approved == 'true'
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: model-and-metrics
           path: models
+
+      - name: Verify model exists before deploy
+        run: |
+          echo "Workspace content:" && ls -lah
+          echo "Models content:" && ls -lah models || true
+          test -f models/model-latest.pkl || (echo "models/model-latest.pkl not found" && exit 1)
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
       - name: Deploy Space (update app + model)
         env:
           HF_TOKEN:   ${{ secrets.HF_TOKEN }}
