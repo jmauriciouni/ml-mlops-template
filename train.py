@@ -2,8 +2,8 @@ import os
 import json
 from pathlib import Path
 
-
-import mlflow  # opcional: si no usarás MLflow, puedes quitar estas 2 líneas
+# (si no usarás MLflow, puedes borrar estas 3 líneas)
+import mlflow
 import mlflow.sklearn
 
 from sklearn.datasets import load_iris
@@ -12,8 +12,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 
 from model_utils import save_model_bundle
+import joblib   # <--- NUEVO
 
 METRICS_PATH = Path("metrics.json")
+MODEL_DIR = Path("models")
+MODEL_PATH = MODEL_DIR / "model-latest.pkl"
+
 ACCURACY_THRESHOLD = float(os.getenv("ACCURACY_THRESHOLD", "0.90"))
 EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "iris-ci-ct")
 
@@ -30,15 +34,24 @@ def train_and_eval():
         "classes": iris.target_names.tolist(),
     }
 
-    # guarda bundle para la app
+    # === GUARDA EL MODELO (dos caminos para asegurar) ===
     bundle = {"model": clf, "target_names": iris.target_names.tolist()}
-    os.makedirs("models", exist_ok=True)
-    save_model_bundle(bundle)  # models/model-latest.pkl
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1) tu helper (por compatibilidad con tu app)
+    save_model_bundle(bundle)  # debería escribir models/model-latest.pkl
+
+    # 2) redundante/seguro: escribir explícito con joblib
+    joblib.dump(bundle, MODEL_PATH)
+
+    # Verificación dura: si no existe, falla el CT aquí
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"{MODEL_PATH} not created after training")
 
     # guarda métricas
     METRICS_PATH.write_text(json.dumps(metrics, indent=2))
 
-    # (opcional) log MLflow local (no hace falta para HF, pero no molesta)
+    # (opcional) log MLflow local
     try:
         mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns"))
         mlflow.set_experiment(EXPERIMENT_NAME)
@@ -47,10 +60,12 @@ def train_and_eval():
             mlflow.log_metrics({"accuracy": metrics["accuracy"], "f1_macro": metrics["f1_macro"]})
             mlflow.sklearn.log_model(clf, artifact_path="model")
             mlflow.log_artifact(str(METRICS_PATH))
-            mlflow.log_artifact("models/model-latest.pkl")
+            mlflow.log_artifact(str(MODEL_PATH))
     except Exception:
         pass
 
+    # prints útiles para el log
+    print(f"Saved model at: {MODEL_PATH.resolve()}")
     print("Train OK:", metrics)
     approved = metrics["accuracy"] >= ACCURACY_THRESHOLD
     print(f"APPROVED={str(approved).lower()}")
