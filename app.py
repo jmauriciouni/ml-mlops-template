@@ -1,6 +1,7 @@
-import os, time
+import os
 import gradio as gr
 import pandas as pd
+import time as t
 from datetime import datetime
 from huggingface_hub import HfApi
 from model_utils import load_model_bundle
@@ -44,8 +45,6 @@ model = bundle["model"]
 target_names = bundle.get("target_names", ["setosa","versicolor","virginica"])
 
 def predict(sepal_length, sepal_width, petal_length, petal_width, y_true=None):
-    import numpy as np
-    import time as t
     features = {
         "sepal length (cm)": float(sepal_length),
         "sepal width (cm)": float(sepal_width),
