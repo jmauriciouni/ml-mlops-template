@@ -1,7 +1,7 @@
 name: CD (CT inside, HF-first)
 
 on:
-  # 🔔 Dispara CD automáticamente cuando CI termina (solo si fue éxito)
+  # Dispara CD automáticamente cuando CI termina (solo si fue éxito)
   workflow_run:
     workflows: ["CI (Multi-Job)"]   # <-- Debe coincidir con name: de tu ci.yml
     types: [completed]
@@ -16,14 +16,14 @@ on:
 
 env:
   ACCURACY_THRESHOLD: "0.90"
-  HF_MODEL_ID:  ${{ secrets.HF_MODEL_ID }}
-  HF_DATASET_ID:${{ secrets.HF_DATASET_ID }}
-  HF_SPACE_ID:  ${{ secrets.HF_SPACE_ID }}
+  HF_MODEL_ID:   ${{ secrets.HF_MODEL_ID }}
+  HF_DATASET_ID: ${{ secrets.HF_DATASET_ID }}
+  HF_SPACE_ID:   ${{ secrets.HF_SPACE_ID }}
 
 jobs:
   # 1) CT = entrenar y producir modelo + métricas
   train:
-    # ✅ Solo arranca CD si el CI concluyó con éxito (cuando el trigger sea workflow_run)
+    # Solo arranca CD si el CI concluyó con éxito (cuando el trigger sea workflow_run)
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
@@ -57,7 +57,6 @@ PY
       - run: |
           if [ "${{ steps.gate.outcome }}" = "success" ]; then echo "approved=true" >> $GITHUB_OUTPUT; else echo "approved=false" >> $GITHUB_OUTPUT; fi
 
-  # 2) Publicar datos/metrics al Dataset repo (HF)
   publish_dataset:
     name: Publish dataset (data/ + metrics.json)
     runs-on: ubuntu-latest
@@ -71,7 +70,7 @@ PY
       - name: Push dataset to HF Hub
         env:
           HF_TOKEN:     ${{ secrets.HF_TOKEN }}
-          HF_DATASET_ID:${{ secrets.HF_DATASET_ID }}
+          HF_DATASET_ID:${{ env.HF_DATASET_ID }}
         run: |
           pip install huggingface_hub
           python - <<'PY'
@@ -91,7 +90,6 @@ if pathlib.Path("metrics.json").exists():
                   commit_message="Update metrics")
 PY
 
-  # 3) Publicar modelo al Model repo
   publish_model:
     name: Publish model (HF Model repo)
     runs-on: ubuntu-latest
@@ -104,7 +102,7 @@ PY
       - name: Push model to HF Hub
         env:
           HF_TOKEN:   ${{ secrets.HF_TOKEN }}
-          HF_MODEL_ID:${{ secrets.HF_MODEL_ID }}
+          HF_MODEL_ID:${{ env.HF_MODEL_ID }}
         run: |
           pip install huggingface_hub
           python - <<'PY'
@@ -121,7 +119,6 @@ api.set_tag(repo_id=mid, repo_type="model", tag="latest")
 api.set_tag(repo_id=mid, repo_type="model", tag=time.strftime("run-%Y%m%d-%H%M%S"))
 PY
 
-  # 4) Deploy al Space (solo si aprobó gate)
   deploy:
     name: Deploy Space
     runs-on: ubuntu-latest
@@ -136,7 +133,7 @@ PY
       - name: Deploy Space (update app + model)
         env:
           HF_TOKEN:   ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID:${{ secrets.HF_SPACE_ID }}
+          HF_SPACE_ID:${{ env.HF_SPACE_ID }}
         run: |
           pip install huggingface_hub
           python - <<'PY'
