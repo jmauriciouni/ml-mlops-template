@@ -1,13 +1,10 @@
 name: CD (CT inside, HF-first)
 
 on:
-  # Dispara CD automáticamente cuando CI termina (solo si fue éxito)
   workflow_run:
-    workflows: ["CI (Multi-Job)"]   # <-- Debe coincidir con name: de tu ci.yml
+    workflows: ["CI (Multi-Job)"]   # Debe coincidir EXACTO con el name: del CI
     types: [completed]
-    branches: [main]                # corre CD solo si el CI fue sobre main
-
-  # (Opcionales; puedes dejarlos para ejecuciones manuales o por drift)
+    branches: [main]
   workflow_dispatch: {}
   push:
     branches: [main]
@@ -21,9 +18,7 @@ env:
   HF_SPACE_ID:   ${{ secrets.HF_SPACE_ID }}
 
 jobs:
-  # 1) CT = entrenar y producir modelo + métricas
   train:
-    # Solo arranca CD si el CI concluyó con éxito (cuando el trigger sea workflow_run)
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
@@ -31,11 +26,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
-      - run: |
+        with:
+          python-version: '3.11'
+
+      - name: Install & Train
+        run: |
           python -m pip install -U pip
           pip install -r requirements.txt
           python train.py | tee train_log.txt
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -43,19 +42,20 @@ jobs:
           path: |
             models/model-latest.pkl
             metrics.json
+
       - id: gate
         name: Gate (accuracy ≥ ${{ env.ACCURACY_THRESHOLD }})
+        shell: bash
         run: |
           ACC=$(python -c "import json;print(json.load(open('metrics.json'))['accuracy'])")
           THR=${{ env.ACCURACY_THRESHOLD }}
-          python - <<PY
-acc=float("${ACC}"); thr=float("${THR}")
-print(f"Accuracy={acc}, Threshold={thr}")
-import sys; sys.exit(0 if acc>=thr else 1)
-PY
-        continue-on-error: true
-      - run: |
-          if [ "${{ steps.gate.outcome }}" = "success" ]; then echo "approved=true" >> $GITHUB_OUTPUT; else echo "approved=false" >> $GITHUB_OUTPUT; fi
+          echo "Accuracy=$ACC  Threshold=$THR"
+          if python -c "import sys; acc=float('$ACC'); thr=float('$THR'); sys.exit(0 if acc>=thr else 1)"; then
+            echo "approved=true" >> $GITHUB_OUTPUT
+          else
+            echo "approved=false" >> $GITHUB_OUTPUT
+          fi
+        # sin continue-on-error; el if ya controla el estado
 
   publish_dataset:
     name: Publish dataset (data/ + metrics.json)
@@ -64,31 +64,24 @@ PY
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: model-and-metrics, path: . }
+        with:
+          name: model-and-metrics
+          path: .
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
       - name: Push dataset to HF Hub
         env:
-          HF_TOKEN:     ${{ secrets.HF_TOKEN }}
-          HF_DATASET_ID:${{ env.HF_DATASET_ID }}
+          HF_TOKEN:      ${{ secrets.HF_TOKEN }}
+          HF_DATASET_ID: ${{ env.HF_DATASET_ID }}
         run: |
-          pip install huggingface_hub
-          python - <<'PY'
-from huggingface_hub import HfApi, create_repo, upload_folder
-import os, pathlib
-api = HfApi(token=os.environ["HF_TOKEN"])
-rid = os.environ["HF_DATASET_ID"]
-create_repo(rid, repo_type="dataset", exist_ok=True)
-# sube data/ si existe
-if os.path.isdir("data"):
-    upload_folder(repo_id=rid, repo_type="dataset", folder_path="data",
-                  path_in_repo="data", commit_message="Update data")
-# sube metrics.json
-if pathlib.Path("metrics.json").exists():
-    upload_folder(repo_id=rid, repo_type="dataset", folder_path=".",
-                  path_in_repo=".", allow_patterns=["metrics.json"],
-                  commit_message="Update metrics")
-PY
+          python -m pip install -U huggingface_hub
+          if [ -d "data" ]; then
+            python -c "from huggingface_hub import HfApi, create_repo, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); rid=os.environ['HF_DATASET_ID']; create_repo(rid, repo_type='dataset', exist_ok=True); upload_folder(repo_id=rid, repo_type='dataset', folder_path='data', path_in_repo='data', commit_message='Update data')"
+          fi
+          if [ -f metrics.json ]; then
+            python -c "from huggingface_hub import HfApi, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); rid=os.environ['HF_DATASET_ID']; upload_folder(repo_id=rid, repo_type='dataset', folder_path='.', path_in_repo='.', allow_patterns=['metrics.json'], commit_message='Update metrics')"
+          fi
 
   publish_model:
     name: Publish model (HF Model repo)
@@ -96,28 +89,20 @@ PY
     needs: [train]
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: model-and-metrics, path: models }
+        with:
+          name: model-and-metrics
+          path: models
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
       - name: Push model to HF Hub
         env:
           HF_TOKEN:   ${{ secrets.HF_TOKEN }}
-          HF_MODEL_ID:${{ env.HF_MODEL_ID }}
+          HF_MODEL_ID: ${{ env.HF_MODEL_ID }}
         run: |
-          pip install huggingface_hub
-          python - <<'PY'
-import os, time
-from huggingface_hub import HfApi, create_repo, upload_folder
-api = HfApi(token=os.environ["HF_TOKEN"])
-mid = os.environ["HF_MODEL_ID"]
-create_repo(mid, repo_type="model", exist_ok=True)
-upload_folder(repo_id=mid, repo_type="model",
-              folder_path="models", path_in_repo=".",
-              commit_message="Upload trained model")
-# tags útiles
-api.set_tag(repo_id=mid, repo_type="model", tag="latest")
-api.set_tag(repo_id=mid, repo_type="model", tag=time.strftime("run-%Y%m%d-%H%M%S"))
-PY
+          python -m pip install -U huggingface_hub
+          python -c "from huggingface_hub import HfApi, create_repo, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); mid=os.environ['HF_MODEL_ID']; create_repo(mid, repo_type='model', exist_ok=True); upload_folder(repo_id=mid, repo_type='model', folder_path='models', path_in_repo='.', commit_message='Upload trained model')"
+          python -c "from huggingface_hub import HfApi; import os, time; api=HfApi(token=os.environ['HF_TOKEN']); mid=os.environ['HF_MODEL_ID']; api.set_tag(repo_id=mid, repo_type='model', tag='latest'); api.set_tag(repo_id=mid, repo_type='model', tag=time.strftime('run-%Y%m%d-%H%M%S'))"
 
   deploy:
     name: Deploy Space
@@ -127,22 +112,16 @@ PY
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: model-and-metrics, path: models }
+        with:
+          name: model-and-metrics
+          path: models
       - uses: actions/setup-python@v5
-        with: { python-version: '3.11' }
+        with:
+          python-version: '3.11'
       - name: Deploy Space (update app + model)
         env:
           HF_TOKEN:   ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID:${{ env.HF_SPACE_ID }}
+          HF_SPACE_ID: ${{ env.HF_SPACE_ID }}
         run: |
-          pip install huggingface_hub
-          python - <<'PY'
-from huggingface_hub import HfApi, create_repo, upload_folder
-import os
-api = HfApi(token=os.environ["HF_TOKEN"])
-sid = os.environ["HF_SPACE_ID"]
-create_repo(sid, repo_type="space", space_sdk="gradio", exist_ok=True)
-upload_folder(repo_id=sid, repo_type="space",
-              folder_path=".", path_in_repo=".",
-              commit_message="CD: refresh Space with approved model")
-PY
+          python -m pip install -U huggingface_hub
+          python -c "from huggingface_hub import HfApi, create_repo, upload_folder; import os; api=HfApi(token=os.environ['HF_TOKEN']); sid=os.environ['HF_SPACE_ID']; create_repo(sid, repo_type='space', space_sdk='gradio', exist_ok=True); upload_folder(repo_id=sid, repo_type='space', folder_path='.', path_in_repo='.', commit_message='CD: refresh Space with approved model')"
