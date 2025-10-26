@@ -1,0 +1,19 @@
+# App / Serving
+gradio
+
+# ML stack
+scikit-learn
+pandas
+numpy
+joblib
+pyyaml
+
+# Testing & calidad
+pytest
+ruff
+
+# Monitor & Drift
+evidently
+
+# Hugging Face
+huggingface_hub
